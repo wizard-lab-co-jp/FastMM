@@ -15,6 +15,23 @@
     import MermaidBlock from './MermaidBlock.svelte';
     import TypstBlock from './TypstBlock.svelte';
 
+    // ── Font size ─────────────────────────────────────────────────────────────
+    const FONT_SIZE_MIN = 0.7;
+    const FONT_SIZE_MAX = 2.5;
+    const FONT_SIZE_STEP = 0.1;
+    let editorFontSize = 1.1;
+
+    function changeFontSize(delta: number) {
+        editorFontSize = Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN,
+            Math.round((editorFontSize + delta) * 10) / 10));
+        localStorage.setItem('fastmm-font-size', String(editorFontSize));
+    }
+
+    function resetFontSize() {
+        editorFontSize = 1.1;
+        localStorage.setItem('fastmm-font-size', String(editorFontSize));
+    }
+
     // ── Menu bar state ────────────────────────────────────────────────────────
     let openMenu: string | null = null;
 
@@ -40,6 +57,12 @@
     let autoSaveTimeout: ReturnType<typeof setTimeout>;
 
     onMount(() => {
+        const saved = localStorage.getItem('fastmm-font-size');
+        if (saved) {
+            const v = parseFloat(saved);
+            if (!isNaN(v)) editorFontSize = Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, v));
+        }
+
         observer = new IntersectionObserver((entries) => {
             let changed = false;
             entries.forEach(entry => {
@@ -505,8 +528,16 @@
                 {/if}
             </div>
 
-            <div class="menu-group">
+            <div class="menu-group" class:active={openMenu === 'settings'}>
                 <button class="menu-label" on:click={() => toggleMenu('settings')}>Settings</button>
+                {#if openMenu === 'settings'}
+                <div class="menu-dropdown">
+                    <span class="menu-item-label">Font Size: {editorFontSize.toFixed(1)}rem</span>
+                    <button on:click={() => { changeFontSize(FONT_SIZE_STEP); closeMenu(); }}>&#43; Increase Font Size</button>
+                    <button on:click={() => { changeFontSize(-FONT_SIZE_STEP); closeMenu(); }}>&#8722; Decrease Font Size</button>
+                    <button on:click={() => { resetFontSize(); closeMenu(); }}>&#8635; Reset Font Size</button>
+                </div>
+                {/if}
             </div>
 
             <div class="menu-status">
@@ -604,7 +635,7 @@
 
         <!-- Center pane: editor -->
         <div class="pane pane-center">
-            <div class="editor-container">
+            <div class="editor-container" style="font-size: {editorFontSize}rem;">
                 {#each $nodeOrder as id (id)}
                     <div data-block-id={id} use:registerBlock style="min-height: 1.5em;">
                         {#if visibleBlocks.has(id)}
@@ -674,7 +705,7 @@
     .editor-main {
         flex: 1;
         min-height: 0;
-        overflow: hidden;       /* panes scroll independently */
+        overflow: hidden auto;
         display: flex;
         flex-direction: row;
     }
@@ -689,13 +720,15 @@
     /* ── Side panes (debug / raw) ────────────────────────────────────────── */
     .pane-debug {
         width: 30%;
-        flex-shrink: 0;
+        flex-shrink: 1;
+        min-width: 200px;
         background: #111;
         border-right: 1px solid #2a2a2a;
     }
     .pane-raw {
         width: 30%;
-        flex-shrink: 0;
+        flex-shrink: 1;
+        min-width: 200px;
         background: #111;
         border-left: 1px solid #2a2a2a;
     }
@@ -726,7 +759,7 @@
     /* ── Center pane ─────────────────────────────────────────────────────── */
     .pane-center {
         flex: 1;
-        min-width: 0;
+        min-width: 400px;
         overflow-y: auto;
         display: flex;
         justify-content: center;
@@ -794,6 +827,14 @@
         border: none;
         border-top: 1px solid #333;
         margin: 0.2rem 0;
+    }
+    .menu-item-label {
+        display: block;
+        padding: 0.35rem 1rem;
+        font-size: 0.78rem;
+        color: #888;
+        border-bottom: 1px solid #333;
+        user-select: none;
     }
     .menu-status {
         margin-left: auto;
