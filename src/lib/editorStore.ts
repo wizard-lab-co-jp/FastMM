@@ -1,15 +1,21 @@
 import { writable } from 'svelte/store';
 import type { InlineDecorationNode } from './domUtils';
 
+// Mirrors the Rust BlockType enum serialized with serde tag="type" rename_all="camelCase".
 export type BlockType =
-    | 'paragraph'
-    | 'mathBlock'
-    | 'mermaid'
-    | 'typst'
-    | 'blockQuote'
-    | { heading: { level: number } }
-    | { codeBlock: { language: string } }
-    | { list: { listType: string; indentLevel: number; parentListId: string | null } };
+    | { type: 'paragraph' }
+    | { type: 'mathBlock' }
+    | { type: 'mermaid' }
+    | { type: 'typst' }
+    | { type: 'blockQuote' }
+    | { type: 'heading'; level: number }
+    | { type: 'codeBlock'; language: string }
+    | { type: 'list'; listType: string; indentLevel: number; parentListId: string | null };
+
+export function blockTypeTag(bt: BlockType | null | undefined): string {
+    if (!bt) return 'paragraph';
+    return bt.type;
+}
 
 export type BlockData = {
     id: string;

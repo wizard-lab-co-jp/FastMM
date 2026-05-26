@@ -1,6 +1,7 @@
 use crate::ast::{
     BlockSyncRequest, BlockSyncResponse, CaretPosition, InlineDecorationNode, ResponseAction,
-    FormatRequest, FormatResponse, HistoryRequest, HistoryResponse, RestoredBlockData
+    FormatRequest, FormatResponse, HistoryRequest, HistoryResponse, RestoredBlockData,
+    SplitBlockRequest, SplitBlockResponse,
 };
 use std::collections::HashMap;
 
@@ -218,11 +219,18 @@ impl EditorState {
 
         let block = self.blocks.get_mut(&req.node_id)?;
 
-        let (new_markdown, new_caret) = crate::ast::apply_inline_decoration(
+        // selection_start/end from the frontend are in display-space (no block prefix).
+        // Shift them into markdown-space so the decoration targets the correct chars.
+        let prefix = Self::block_type_prefix(&block.block_type);
+        let prefix_utf16_len: usize = prefix.chars().map(|c| c.len_utf16()).sum();
+        let adj_start = req.selection_start + prefix_utf16_len;
+        let adj_end   = req.selection_end   + prefix_utf16_len;
+
+        let (new_markdown, _) = crate::ast::apply_inline_decoration(
             &block.markdown,
             &req.action_type,
-            req.selection_start,
-            req.selection_end,
+            adj_start,
+            adj_end,
             req.meta_value.as_deref()
         );
 
@@ -233,6 +241,9 @@ impl EditorState {
         block.block_type = block_type.clone();
         self.is_dirty = true;
 
+        // Return the caret at selection_end in display-space.  This is stable: for
+        // block-type changes the content position is preserved; for inline wraps the
+        // DOM text-offset (visible chars) at selection_end hasn't moved.
         Some(FormatResponse {
             seq: req.seq,
             node_id: req.node_id.clone(),
@@ -240,8 +251,70 @@ impl EditorState {
             block_type,
             caret: CaretPosition {
                 target_node_id: req.node_id,
-                offset: new_caret,
+                offset: req.selection_end,
             },
+        })
+    }
+
+    pub fn split_block(&mut self, req: SplitBlockRequest) -> Option<SplitBlockResponse> {
+        if req.seq <= self.last_seq {
+            return None;
+        }
+        self.last_seq = req.seq;
+
+        self.push_undo_snapshot(&req.node_id, req.caret_offset);
+
+        let block = self.blocks.get(&req.node_id)?.clone();
+
+        // Compute content portion (strip block prefix)
+        let prefix = Self::block_type_prefix(&block.block_type);
+        let prefix_byte_len = prefix.len();
+        let content = &block.markdown[prefix_byte_len..];
+
+        // Find byte split point from UTF-16 caret offset
+        let split_byte = crate::ast::utf16_offset_to_byte_index(content, req.caret_offset as u32)
+            .unwrap_or(content.len());
+
+        let head = &content[..split_byte];
+        let tail = content[split_byte..].to_string();
+
+        // Update original block with head content (keeps its block type)
+        let head_markdown = format!("{}{}", prefix, head);
+        let original_ast = crate::ast::parse_markdown_to_decorations(&head_markdown);
+        let original_type = block.block_type.clone();
+        if let Some(b) = self.blocks.get_mut(&req.node_id) {
+            b.markdown = head_markdown;
+        }
+
+        // New tail block is always a paragraph
+        let new_type = crate::ast::BlockType::Paragraph;
+        let new_ast = crate::ast::parse_markdown_to_decorations(&tail);
+        self.blocks.insert(
+            req.new_block_id.clone(),
+            BlockState {
+                id: req.new_block_id.clone(),
+                parent_id: None,
+                previous_sibling_id: Some(req.node_id.clone()),
+                markdown: tail,
+                block_type: new_type.clone(),
+            },
+        );
+
+        // Insert new block immediately after the original in node_order
+        if let Some(idx) = self.node_order.iter().position(|id| id == &req.node_id) {
+            self.node_order.insert(idx + 1, req.new_block_id.clone());
+        }
+        self.is_dirty = true;
+
+        Some(SplitBlockResponse {
+            seq: req.seq,
+            original_node_id: req.node_id.clone(),
+            new_node_id: req.new_block_id.clone(),
+            original_ast_content: original_ast,
+            original_block_type: original_type,
+            new_ast_content: new_ast,
+            new_block_type: new_type,
+            new_node_order: self.node_order.clone(),
         })
     }
 

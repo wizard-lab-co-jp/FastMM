@@ -1,13 +1,14 @@
 <script lang="ts">
     import { invoke } from '@tauri-apps/api/core';
-    import { onMount } from 'svelte';
+    import { onMount, tick } from 'svelte';
     import { get } from 'svelte/store';
+    import { getCurrentWindow } from '@tauri-apps/api/window';
     import { extractDecorationsFromDOM, getCaretOffset, getSelectionRange, setCaretOffset } from './domUtils';
     import {
         blocks, nodeOrder, isDirty,
         activeBlockId, activeBlockElement,
-        nextSeq,
-        type BlockData, type VersionEntry,
+        nextSeq, blockTypeTag,
+        type BlockData, type BlockType, type VersionEntry,
     } from './editorStore';
     import Block from './Block.svelte';
     import MathBlock from './MathBlock.svelte';
@@ -24,6 +25,10 @@
     function closeMenu() {
         openMenu = null;
     }
+
+    // ── Pane visibility ───────────────────────────────────────────────────────
+    let showDebugPane = false;
+    let showRawPane = false;
 
     // ── Time Machine panel state ──────────────────────────────────────────────
     let showTimeMachine = false;
@@ -49,7 +54,22 @@
             if (changed) visibleBlocks = visibleBlocks;
         }, { rootMargin: '200px' });
 
-        return () => observer.disconnect();
+        // Tauri v2 file drag-drop
+        let unlistenDrop: (() => void) | undefined;
+        getCurrentWindow().onDragDropEvent(async (event) => {
+            if (event.payload.type === 'drop') {
+                const paths: string[] = (event.payload as any).paths ?? [];
+                const mdPath = paths.find(p => p.toLowerCase().endsWith('.md'));
+                if (mdPath) {
+                    await handleFileDrop(mdPath);
+                }
+            }
+        }).then(fn => { unlistenDrop = fn; }).catch(() => {});
+
+        return () => {
+            observer.disconnect();
+            unlistenDrop?.();
+        };
     });
 
     function registerBlock(el: HTMLElement) {
@@ -60,6 +80,33 @@
         }
     }
 
+    // ── Toolbar active-format state (selectionchange, 16 ms debounce) ─────────
+    let activeFormats = { bold: false, italic: false, code: false };
+    let fmtDebounce: ReturnType<typeof setTimeout>;
+
+    function onSelectionChange() {
+        clearTimeout(fmtDebounce);
+        fmtDebounce = setTimeout(() => {
+            const sel = window.getSelection();
+            if (!sel || sel.rangeCount === 0) {
+                activeFormats = { bold: false, italic: false, code: false };
+                return;
+            }
+            let node: Node | null = sel.getRangeAt(0).startContainer;
+            let bold = false, italic = false, code = false;
+            while (node) {
+                if (node.nodeType === Node.ELEMENT_NODE) {
+                    const tag = (node as HTMLElement).tagName?.toLowerCase();
+                    if (tag === 'strong' || tag === 'b') bold = true;
+                    if (tag === 'em' || tag === 'i') italic = true;
+                    if (tag === 'code') code = true;
+                }
+                node = node.parentNode;
+            }
+            activeFormats = { bold, italic, code };
+        }, 16);
+    }
+
     // ── File operations ───────────────────────────────────────────────────────
 
     async function openFile() {
@@ -67,17 +114,41 @@
         try {
             const resp: any = await invoke('open_file');
             if (resp) {
-                const newBlocks: Record<string, BlockData> = {};
-                for (const b of resp.blocks) {
-                    newBlocks[b.id] = b;
-                }
-                blocks.set(newBlocks);
-                nodeOrder.set(resp.nodeOrder);
-                isDirty.set(false);
+                applyDocumentResponse(resp);
             }
         } catch (err) {
             console.error('Failed to open file:', err);
         }
+    }
+
+    async function handleFileDrop(filePath: string) {
+        if (get(isDirty)) {
+            const ok = confirm('未保存の変更があります。このファイルを開くと失われます。続けますか？');
+            if (!ok) return;
+        }
+        try {
+            const resp: any = await invoke('open_file_from_path', { path: filePath });
+            if (resp) {
+                applyDocumentResponse(resp);
+            }
+        } catch (err) {
+            console.error('Failed to open dropped file:', err);
+        }
+    }
+
+    function applyDocumentResponse(resp: any) {
+        const newBlocks: Record<string, BlockData> = {};
+        for (const b of resp.blocks) {
+            newBlocks[b.id] = {
+                id: b.id,
+                blockType: b.blockType,
+                astContent: b.astContent,
+                plainText: b.plainText || '',
+            };
+        }
+        blocks.set(newBlocks);
+        nodeOrder.set(resp.nodeOrder);
+        isDirty.set(false);
     }
 
     async function saveFile() {
@@ -127,8 +198,57 @@
         }
     }
 
-    function handleKeyDown(_id: string, _e: KeyboardEvent, _element: HTMLElement) {
-        // Reserved for editor-level key handling
+    // ── Enter key: split block ────────────────────────────────────────────────
+
+    function generateBlockId(): string {
+        return `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+    }
+
+    async function handleSplitBlock(id: string, element: HTMLElement) {
+        // Flush any pending content changes first
+        await handleInput(id, element);
+        const caretOffset = getCaretOffset(element);
+        const newBlockId = generateBlockId();
+
+        try {
+            const resp: any = await invoke('split_block', {
+                req: { seq: nextSeq(), nodeId: id, caretOffset, newBlockId }
+            });
+            if (resp) {
+                blocks.update(bks => {
+                    const updated = { ...bks };
+                    updated[id] = {
+                        ...updated[id],
+                        astContent: resp.originalAstContent,
+                        blockType: resp.originalBlockType,
+                    };
+                    updated[resp.newNodeId] = {
+                        id: resp.newNodeId,
+                        blockType: resp.newBlockType,
+                        astContent: resp.newAstContent,
+                        plainText: '',
+                    };
+                    return updated;
+                });
+                nodeOrder.set(resp.newNodeOrder);
+                triggerAutoSave();
+
+                await tick();
+                const newEl = document.querySelector(`[data-block-id="${resp.newNodeId}"]`) as HTMLElement;
+                if (newEl) {
+                    newEl.focus();
+                    setCaretOffset(newEl, 0);
+                }
+            }
+        } catch (err) {
+            console.error('split_block failed:', err);
+        }
+    }
+
+    async function handleKeyDown(id: string, e: KeyboardEvent, element: HTMLElement) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            await handleSplitBlock(id, element);
+        }
     }
 
     // ── Block move ────────────────────────────────────────────────────────────
@@ -193,17 +313,15 @@
                     ...bks,
                     [resp.nodeId]: { ...bks[resp.nodeId], astContent: resp.astContent, blockType: resp.blockType }
                 }));
-                setTimeout(() => {
-                    const el = document.querySelector(`[data-block-id="${resp.nodeId}"]`) as HTMLElement;
-                    if (el) setCaretOffset(el, resp.caret.offset);
-                }, 0);
+                await tick();
+                const el = document.querySelector(`[data-block-id="${resp.nodeId}"]`) as HTMLElement;
+                if (el) setCaretOffset(el, resp.caret.offset);
             }
         } catch (err) {
             console.error('apply_format failed:', err);
         }
     }
 
-    /** Called from the toolbar; uses the currently focused block. */
     async function formatActiveBlock(actionType: string, metaValue?: string) {
         const id = get(activeBlockId);
         const el = get(activeBlockElement);
@@ -233,10 +351,9 @@
                 blocks.set(newBlocks);
                 isDirty.set(true);
 
-                setTimeout(() => {
-                    const el = document.querySelector(`[data-block-id="${resp.caret.targetNodeId}"]`) as HTMLElement;
-                    if (el) setCaretOffset(el, resp.caret.offset);
-                }, 0);
+                await tick();
+                const el = document.querySelector(`[data-block-id="${resp.caret.targetNodeId}"]`) as HTMLElement;
+                if (el) setCaretOffset(el, resp.caret.offset);
             }
         } catch (err) {
             console.error('trigger_history failed:', err);
@@ -245,7 +362,7 @@
 
     // ── Time Machine ──────────────────────────────────────────────────────────
 
-    function applyRestoredBlocks(resp: any) {
+    async function applyRestoredBlocks(resp: any) {
         const newBlocks: Record<string, BlockData> = {};
         for (const rb of resp.restoredBlocks) {
             newBlocks[rb.id] = {
@@ -259,10 +376,9 @@
         nodeOrder.set(resp.nodeOrder);
         isDirty.set(true);
 
-        setTimeout(() => {
-            const el = document.querySelector(`[data-block-id="${resp.caret.targetNodeId}"]`) as HTMLElement;
-            if (el) setCaretOffset(el, resp.caret.offset);
-        }, 0);
+        await tick();
+        const el = document.querySelector(`[data-block-id="${resp.caret.targetNodeId}"]`) as HTMLElement;
+        if (el) setCaretOffset(el, resp.caret.offset);
     }
 
     async function openTimeMachine() {
@@ -287,7 +403,7 @@
                 req: { seq: nextSeq(), versionId: entry.versionId, source: entry.source }
             });
             if (resp) {
-                applyRestoredBlocks(resp);
+                await applyRestoredBlocks(resp);
                 showTimeMachine = false;
             }
         } catch (err) {
@@ -298,14 +414,53 @@
 
     // ── Toolbar helpers ───────────────────────────────────────────────────────
 
-    function isGraphicalBlock(blockType: any): boolean {
-        return blockType === 'mermaid' || blockType === 'mathBlock' || blockType === 'typst';
+    function isGraphicalBlock(bt: BlockType | null | undefined): boolean {
+        const t = blockTypeTag(bt);
+        return t === 'mermaid' || t === 'mathBlock' || t === 'typst';
     }
 
     $: activeBlock = $activeBlockId ? $blocks[$activeBlockId] : null;
-    $: toolbarDisabled = !activeBlock || isGraphicalBlock(activeBlock.blockType);
+    $: toolbarDisabled = !activeBlock || isGraphicalBlock(activeBlock?.blockType);
+
+    // ── Raw / Debug pane content ──────────────────────────────────────────────
+
+    function astToMarkdown(nodes: any[]): string {
+        if (!nodes) return '';
+        return nodes.map((n: any) => {
+            if (n.type === 'text') return n.text ?? '';
+            if (n.type === 'bold') return `**${astToMarkdown(n.children)}**`;
+            if (n.type === 'italic') return `*${astToMarkdown(n.children)}*`;
+            if (n.type === 'code') return `\`${astToMarkdown(n.children)}\``;
+            if (n.type === 'link') return `[${astToMarkdown(n.children)}](${n.href})`;
+            return '';
+        }).join('');
+    }
+
+    function getBlockPrefix(bt: BlockType | null | undefined): string {
+        if (!bt) return '';
+        const t = bt.type;
+        if (t === 'blockQuote') return '> ';
+        if (t === 'heading') return '#'.repeat((bt as any).level) + ' ';
+        if (t === 'list') return (bt as any).listType === 'ordered' ? '1. ' : '- ';
+        if (t === 'codeBlock') return '```' + ((bt as any).language || '') + '\n';
+        return '';
+    }
+
+    $: debugJson = $activeBlockId && $blocks[$activeBlockId]
+        ? JSON.stringify($blocks[$activeBlockId].astContent, null, 2)
+        : '(no block selected)';
+
+    $: rawMarkdown = $nodeOrder.map(id => {
+        const b = $blocks[id];
+        if (!b) return '';
+        const t = blockTypeTag(b.blockType);
+        if (t === 'mermaid' || t === 'mathBlock' || t === 'typst') return b.plainText || '';
+        return getBlockPrefix(b.blockType) + astToMarkdown(b.astContent);
+    }).join('\n\n');
 </script>
 
+<!-- selectionchange listener for toolbar active-state sync -->
+<svelte:document on:selectionchange={onSelectionChange} />
 <!-- Click-outside handler to close menus -->
 <svelte:window on:click={closeMenu} />
 
@@ -339,6 +494,13 @@
                 {#if openMenu === 'view'}
                 <div class="menu-dropdown">
                     <button on:click={openTimeMachine}>&#128337; Time Machine</button>
+                    <hr class="menu-divider" />
+                    <button on:click={() => { showDebugPane = !showDebugPane; closeMenu(); }}>
+                        {showDebugPane ? '✓' : '　'} Debug (AST)
+                    </button>
+                    <button on:click={() => { showRawPane = !showRawPane; closeMenu(); }}>
+                        {showRawPane ? '✓' : '　'} Raw Markdown
+                    </button>
                 </div>
                 {/if}
             </div>
@@ -360,6 +522,7 @@
         <div class="format-toolbar">
             <button
                 class="fmt-btn"
+                class:active={activeFormats.bold}
                 disabled={toolbarDisabled}
                 title="Bold (Ctrl+B)"
                 on:mousedown|preventDefault={() => formatActiveBlock('bold')}>
@@ -367,6 +530,7 @@
             </button>
             <button
                 class="fmt-btn"
+                class:active={activeFormats.italic}
                 disabled={toolbarDisabled}
                 title="Italic (Ctrl+I)"
                 on:mousedown|preventDefault={() => formatActiveBlock('italic')}>
@@ -374,6 +538,7 @@
             </button>
             <button
                 class="fmt-btn"
+                class:active={activeFormats.code}
                 disabled={toolbarDisabled}
                 title="Inline Code (Ctrl+E)"
                 on:mousedown|preventDefault={() => formatActiveBlock('code')}>
@@ -382,34 +547,22 @@
 
             <span class="tb-divider"></span>
 
-            <button
-                class="fmt-btn"
-                disabled={toolbarDisabled}
-                title="Heading 1"
-                on:mousedown|preventDefault={() => formatActiveBlock('heading', '1')}>
-                H1
-            </button>
-            <button
-                class="fmt-btn"
-                disabled={toolbarDisabled}
-                title="Heading 2"
-                on:mousedown|preventDefault={() => formatActiveBlock('heading', '2')}>
-                H2
-            </button>
-            <button
-                class="fmt-btn"
-                disabled={toolbarDisabled}
-                title="Heading 3"
-                on:mousedown|preventDefault={() => formatActiveBlock('heading', '3')}>
-                H3
-            </button>
+            <button class="fmt-btn" disabled={toolbarDisabled} title="Heading 1"
+                on:mousedown|preventDefault={() => formatActiveBlock('heading', '1')}>H1</button>
+            <button class="fmt-btn" disabled={toolbarDisabled} title="Heading 2"
+                on:mousedown|preventDefault={() => formatActiveBlock('heading', '2')}>H2</button>
+            <button class="fmt-btn" disabled={toolbarDisabled} title="Heading 3"
+                on:mousedown|preventDefault={() => formatActiveBlock('heading', '3')}>H3</button>
+            <button class="fmt-btn" disabled={toolbarDisabled} title="Heading 4"
+                on:mousedown|preventDefault={() => formatActiveBlock('heading', '4')}>H4</button>
+            <button class="fmt-btn" disabled={toolbarDisabled} title="Heading 5"
+                on:mousedown|preventDefault={() => formatActiveBlock('heading', '5')}>H5</button>
+            <button class="fmt-btn" disabled={toolbarDisabled} title="Heading 6"
+                on:mousedown|preventDefault={() => formatActiveBlock('heading', '6')}>H6</button>
 
             <span class="tb-divider"></span>
 
-            <button
-                class="fmt-btn"
-                disabled={toolbarDisabled}
-                title="Unordered List"
+            <button class="fmt-btn" disabled={toolbarDisabled} title="Unordered List"
                 on:mousedown|preventDefault={() => formatActiveBlock('list')}>
                 &#8801;
             </button>
@@ -439,41 +592,60 @@
         {/if}
     </header>
 
-    <!-- ── Editor Main ────────────────────────────────────────────────────── -->
+    <!-- ── Editor Main (3-pane flex row) ─────────────────────────────────── -->
     <main class="editor-main">
-        <div class="editor-container">
-            {#each $nodeOrder as id (id)}
-                <div data-block-id={id} use:registerBlock style="min-height: 1.5em;">
-                    {#if visibleBlocks.has(id)}
-                        {#if $blocks[id].blockType === 'mermaid'}
-                            <MermaidBlock id={id} plainText={$blocks[id].plainText} onSync={handleGraphicalSync} />
-                        {:else if $blocks[id].blockType === 'mathBlock'}
-                            <MathBlock id={id} plainText={$blocks[id].plainText} onSync={handleGraphicalSync} />
-                        {:else if $blocks[id].blockType === 'typst'}
-                            <TypstBlock id={id} plainText={$blocks[id].plainText} onSync={handleGraphicalSync} />
+        <!-- Left pane: Debug / AST view -->
+        {#if showDebugPane}
+        <aside class="pane pane-debug">
+            <div class="pane-title">AST Debug</div>
+            <pre class="pane-content">{debugJson}</pre>
+        </aside>
+        {/if}
+
+        <!-- Center pane: editor -->
+        <div class="pane pane-center">
+            <div class="editor-container">
+                {#each $nodeOrder as id (id)}
+                    <div data-block-id={id} use:registerBlock style="min-height: 1.5em;">
+                        {#if visibleBlocks.has(id)}
+                            {#if blockTypeTag($blocks[id]?.blockType) === 'mermaid'}
+                                <MermaidBlock id={id} plainText={$blocks[id].plainText} onSync={handleGraphicalSync} />
+                            {:else if blockTypeTag($blocks[id]?.blockType) === 'mathBlock'}
+                                <MathBlock id={id} plainText={$blocks[id].plainText} onSync={handleGraphicalSync} />
+                            {:else if blockTypeTag($blocks[id]?.blockType) === 'typst'}
+                                <TypstBlock id={id} plainText={$blocks[id].plainText} onSync={handleGraphicalSync} />
+                            {:else}
+                                <Block
+                                    id={id}
+                                    blockType={$blocks[id].blockType}
+                                    astContent={$blocks[id].astContent}
+                                    onInput={handleInput}
+                                    onKeyDown={handleKeyDown}
+                                    onMove={handleMoveBlock}
+                                    onFormat={handleFormat}
+                                    onHistory={handleHistory}
+                                />
+                            {/if}
                         {:else}
-                            <Block
-                                id={id}
-                                blockType={$blocks[id].blockType}
-                                astContent={$blocks[id].astContent}
-                                onInput={handleInput}
-                                onKeyDown={handleKeyDown}
-                                onMove={handleMoveBlock}
-                                onFormat={handleFormat}
-                                onHistory={handleHistory}
-                            />
+                            <div class="placeholder">...</div>
                         {/if}
-                    {:else}
-                        <div class="placeholder">...</div>
-                    {/if}
-                </div>
-            {/each}
-            {#if $nodeOrder.length === 0}
-                <div class="empty-state">
-                    <p>No file opened. Use File → Open to load a Markdown file.</p>
-                </div>
-            {/if}
+                    </div>
+                {/each}
+                {#if $nodeOrder.length === 0}
+                    <div class="empty-state">
+                        <p>No file opened. Use File → Open or drop a .md file here.</p>
+                    </div>
+                {/if}
+            </div>
         </div>
+
+        <!-- Right pane: Raw Markdown view -->
+        {#if showRawPane}
+        <aside class="pane pane-raw">
+            <div class="pane-title">Raw Markdown</div>
+            <pre class="pane-content">{rawMarkdown}</pre>
+        </aside>
+        {/if}
     </main>
 </div>
 
@@ -498,10 +670,63 @@
         flex-shrink: 0;
     }
 
-    /* ── Editor Main ─────────────────────────────────────────────────────── */
+    /* ── Editor Main — 3-pane row ────────────────────────────────────────── */
     .editor-main {
         flex: 1;
         min-height: 0;
+        overflow: hidden;       /* panes scroll independently */
+        display: flex;
+        flex-direction: row;
+    }
+
+    /* ── Shared pane base ────────────────────────────────────────────────── */
+    .pane {
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+    }
+
+    /* ── Side panes (debug / raw) ────────────────────────────────────────── */
+    .pane-debug {
+        width: 30%;
+        flex-shrink: 0;
+        background: #111;
+        border-right: 1px solid #2a2a2a;
+    }
+    .pane-raw {
+        width: 30%;
+        flex-shrink: 0;
+        background: #111;
+        border-left: 1px solid #2a2a2a;
+    }
+    .pane-title {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: #666;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        padding: 0.5rem 0.75rem 0.25rem;
+        border-bottom: 1px solid #222;
+        flex-shrink: 0;
+    }
+    .pane-content {
+        flex: 1;
+        margin: 0;
+        padding: 0.75rem;
+        font-family: 'Consolas', 'SF Mono', monospace;
+        font-size: 0.72rem;
+        line-height: 1.5;
+        color: #8c8;
+        white-space: pre-wrap;
+        word-break: break-all;
+        overflow-wrap: anywhere;
+    }
+    .pane-raw .pane-content { color: #8bc; }
+
+    /* ── Center pane ─────────────────────────────────────────────────────── */
+    .pane-center {
+        flex: 1;
+        min-width: 0;
         overflow-y: auto;
         display: flex;
         justify-content: center;
@@ -541,7 +766,7 @@
         position: absolute;
         top: 100%;
         left: 0;
-        min-width: 150px;
+        min-width: 160px;
         background: #2a2a2a;
         border: 1px solid #444;
         border-radius: 0 4px 4px 4px;
@@ -565,6 +790,11 @@
         background: #3a3a3a;
         color: #fff;
     }
+    .menu-divider {
+        border: none;
+        border-top: 1px solid #333;
+        margin: 0.2rem 0;
+    }
     .menu-status {
         margin-left: auto;
         padding: 0 0.75rem;
@@ -582,6 +812,7 @@
         gap: 0.2rem;
         background: #222;
         border-bottom: 1px solid #333;
+        flex-wrap: wrap;
     }
     .fmt-btn {
         background: transparent;
@@ -594,11 +825,17 @@
         min-width: 28px;
         text-align: center;
         line-height: 1.4;
+        transition: background 0.1s, border-color 0.1s, color 0.1s;
     }
     .fmt-btn:hover:not(:disabled) {
         background: #333;
         border-color: #555;
         color: #fff;
+    }
+    .fmt-btn.active {
+        background: #1a4a7a;
+        border-color: #4a90e2;
+        color: #8bc4ff;
     }
     .fmt-btn:disabled {
         color: #444;
@@ -613,7 +850,7 @@
 
     /* ── Editor Container ────────────────────────────────────────────────── */
     .editor-container {
-        max-width: 800px;
+        max-width: min(800px, 100%);
         width: 100%;
         margin: 2rem auto;
         padding: 2rem;
@@ -624,6 +861,7 @@
         font-family: 'Inter', system-ui, -apple-system, sans-serif;
         font-size: 1.1rem;
         line-height: 1.6;
+        box-sizing: border-box;
     }
     .placeholder {
         color: #444;

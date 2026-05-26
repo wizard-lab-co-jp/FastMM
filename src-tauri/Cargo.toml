@@ -1,5 +1,5 @@
 [package]
-name = "tauri-app"
+name = "fastmm"
 version = "0.1.0"
 description = "FastMM — A fast Markdown editor with Typst support"
 authors = ["wizard-lab <areole.noir.yu@gmail.com>"]

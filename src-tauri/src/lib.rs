@@ -6,6 +6,7 @@ use crate::ast::{
     BlockSyncRequest, BlockSyncResponse, BlockMoveRequest, BlockMoveResponse,
     InitialDocumentResponse, FormatRequest, FormatResponse, HistoryRequest, HistoryResponse,
     VersionHistoryResponse, VersionEntry, RestoreVersionRequest,
+    SplitBlockRequest, SplitBlockResponse,
 };
 use crate::editor_state::EditorState;
 use crate::typst_world::compile_typst;
@@ -140,6 +141,46 @@ fn trigger_history(
 ) -> Result<Option<HistoryResponse>, String> {
     let mut editor = state.lock().unwrap();
     Ok(editor.trigger_history(req))
+}
+
+#[tauri::command]
+fn split_block(
+    req: SplitBlockRequest,
+    state: tauri::State<'_, Mutex<EditorState>>,
+) -> Result<Option<SplitBlockResponse>, String> {
+    let mut editor = state.lock().unwrap();
+    Ok(editor.split_block(req))
+}
+
+#[tauri::command]
+async fn open_file_from_path(
+    path: String,
+    state: tauri::State<'_, Mutex<EditorState>>,
+) -> Result<Option<InitialDocumentResponse>, String> {
+    let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let (blocks, node_order) = crate::ast::parse_document_to_blocks(&content);
+
+    let mut editor = state.lock().unwrap();
+    editor.blocks.clear();
+    for b in &blocks {
+        editor.blocks.insert(b.id.clone(), crate::editor_state::BlockState {
+            id: b.id.clone(),
+            parent_id: None,
+            previous_sibling_id: None,
+            markdown: b.plain_text.clone(),
+            block_type: b.block_type.clone(),
+        });
+    }
+    editor.node_order = node_order.clone();
+    editor.current_file_path = Some(path.clone());
+    editor.file_path_hash = Some(crate::editor_state::EditorState::hash_path(&path));
+    editor.is_dirty = false;
+
+    Ok(Some(InitialDocumentResponse {
+        blocks,
+        node_order,
+        file_path: Some(path),
+    }))
 }
 
 // ─── Auto-save (silent path: app_data_dir) ───────────────────────────────────
@@ -380,7 +421,8 @@ pub fn run() {
         .manage(editor_state)
         .invoke_handler(tauri::generate_handler![
             greet, sync_block, open_file, save_file, move_block, apply_format, trigger_history,
-            compile_typst, auto_save_silent, get_version_history, restore_version
+            compile_typst, auto_save_silent, get_version_history, restore_version,
+            split_block, open_file_from_path
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -45,11 +45,13 @@ pub enum InlineDecorationNode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
+#[serde(tag = "type", rename_all = "camelCase")]
 pub enum BlockType {
     Paragraph,
     Heading { level: u8 },
+    #[serde(rename_all = "camelCase")]
     CodeBlock { language: String },
+    #[serde(rename_all = "camelCase")]
     List {
         list_type: String, // "ordered" | "unordered"
         indent_level: u32,
@@ -92,6 +94,32 @@ pub struct RestoreVersionRequest {
     pub seq: u64,
     pub version_id: String,
     pub source: String,  // "auto" | "manual"
+}
+
+// ─── Split-block types ────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SplitBlockRequest {
+    pub seq: u64,
+    pub node_id: String,
+    /// UTF-16 offset within the **displayed** content (no block prefix).
+    pub caret_offset: usize,
+    /// Frontend-allocated ID for the new (tail) block.
+    pub new_block_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SplitBlockResponse {
+    pub seq: u64,
+    pub original_node_id: String,
+    pub new_node_id: String,
+    pub original_ast_content: Vec<InlineDecorationNode>,
+    pub original_block_type: BlockType,
+    pub new_ast_content: Vec<InlineDecorationNode>,
+    pub new_block_type: BlockType,
+    pub new_node_order: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

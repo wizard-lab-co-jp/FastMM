@@ -17,7 +17,7 @@ describe('editorStore tests', () => {
         blocks.set({
             'b1': {
                 id: 'b1',
-                blockType: 'paragraph',
+                blockType: { type: 'paragraph' },
                 astContent: [],
                 plainText: 'hello'
             }

@@ -1,10 +1,12 @@
 <script lang="ts">
     import type { InlineDecorationNode } from './domUtils';
+    import type { BlockType } from './editorStore';
     import InlineDecoration from './InlineDecoration.svelte';
-    import { activeBlockId, activeBlockElement } from './editorStore';
+    import { activeBlockId, activeBlockElement, nodeOrder } from './editorStore';
+    import { get } from 'svelte/store';
 
     export let id: string;
-    export let blockType: any;
+    export let blockType: BlockType;
     export let astContent: InlineDecorationNode[];
     export let onInput: (id: string, element: HTMLElement) => void;
     export let onKeyDown: (id: string, e: KeyboardEvent, element: HTMLElement) => void;
@@ -19,29 +21,83 @@
         activeBlockId.set(id);
         activeBlockElement.set(blockEl);
     }
-    let isDragOver = false;
-    let showLinkDialog = false;
-    let linkUrl = "";
 
+    // ── Drag-drop state ───────────────────────────────────────────────────────
+    let isDragOver = false;
+    let isDragging = false;
+    let dropHalf: 'top' | 'bottom' = 'bottom';
+
+    function handleDragStart(e: DragEvent) {
+        if (e.dataTransfer) {
+            e.dataTransfer.setData('text/plain', id);
+            e.dataTransfer.effectAllowed = 'move';
+        }
+        isDragging = true;
+    }
+
+    function handleDragEnd() {
+        isDragging = false;
+    }
+
+    function handleDragOver(e: DragEvent) {
+        e.preventDefault();
+        if (e.dataTransfer) {
+            e.dataTransfer.dropEffect = 'move';
+        }
+        isDragOver = true;
+        // Detect upper / lower half for insertion point
+        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        dropHalf = e.clientY < rect.top + rect.height / 2 ? 'top' : 'bottom';
+    }
+
+    function handleDragLeave(e: DragEvent) {
+        // Only clear if actually leaving this element (not entering a child)
+        const related = e.relatedTarget as Node | null;
+        if (related && (e.currentTarget as HTMLElement).contains(related)) return;
+        isDragOver = false;
+    }
+
+    function handleDrop(e: DragEvent) {
+        e.preventDefault();
+        isDragOver = false;
+        const draggedId = e.dataTransfer?.getData('text/plain');
+        if (!draggedId || draggedId === id) return;
+
+        if (dropHalf === 'top') {
+            // Insert dragged block BEFORE this block.
+            // previousSiblingId = the block before this one in the current order.
+            const order = get(nodeOrder);
+            const thisIdx = order.indexOf(id);
+            const prevSiblingId = thisIdx > 0 ? order[thisIdx - 1] : null;
+            onMove(draggedId, prevSiblingId);
+        } else {
+            // Insert dragged block AFTER this block.
+            onMove(draggedId, id);
+        }
+    }
+
+    // ── Link dialog ───────────────────────────────────────────────────────────
+    let showLinkDialog = false;
+    let linkUrl = '';
+
+    function submitLink() {
+        showLinkDialog = false;
+        onFormat(id, 'link', blockEl, linkUrl);
+        linkUrl = '';
+    }
+
+    // ── Editing callbacks ─────────────────────────────────────────────────────
     function handleInput() {
         if (!isComposing) {
             onInput(id, blockEl);
         }
     }
 
-    function handleCompositionStart() {
-        isComposing = true;
-    }
+    function handleCompositionStart() { isComposing = true; }
 
     function handleCompositionEnd() {
         isComposing = false;
         onInput(id, blockEl);
-    }
-
-    function submitLink() {
-        showLinkDialog = false;
-        onFormat(id, 'link', blockEl, linkUrl);
-        linkUrl = "";
     }
 
     function handleKeyDownEvent(e: KeyboardEvent) {
@@ -69,58 +125,49 @@
             return;
         }
 
+        // Enter (no Shift): split block — prevent default and delegate to parent.
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            onKeyDown(id, e, blockEl);
+            return;
+        }
+
         if (e.key === 'Tab') {
             e.preventDefault();
         }
         onKeyDown(id, e, blockEl);
     }
 
-    function handleDragStart(e: DragEvent) {
-        if (e.dataTransfer) {
-            e.dataTransfer.setData('text/plain', id);
-            e.dataTransfer.effectAllowed = 'move';
-        }
-    }
-
-    function handleDragOver(e: DragEvent) {
-        e.preventDefault();
-        if (e.dataTransfer) {
-            e.dataTransfer.dropEffect = 'move';
-        }
-        isDragOver = true;
-    }
-
-    function handleDragLeave() {
-        isDragOver = false;
-    }
-
-    function handleDrop(e: DragEvent) {
-        e.preventDefault();
-        isDragOver = false;
-        const draggedId = e.dataTransfer?.getData('text/plain');
-        if (draggedId && draggedId !== id) {
-            onMove(draggedId, id);
-        }
-    }
-
-    $: isHeading = blockType && blockType.heading;
-    $: headingLevel = isHeading ? blockType.heading.level : 0;
-    $: isList = blockType && blockType.list;
-    $: listIndent = isList ? blockType.list.indentLevel : 0;
+    // ── Derived display props ─────────────────────────────────────────────────
+    $: btype = blockType?.type ?? 'paragraph';
+    $: isHeading = btype === 'heading';
+    $: headingLevel = isHeading ? (blockType as any).level : 1;
+    $: isList = btype === 'list';
+    $: listIndent = isList ? (blockType as any).indentLevel : 0;
 </script>
-  
-<div class="block-wrapper" 
-     class:drag-over={isDragOver}
-     on:dragover={handleDragOver}
-     on:dragleave={handleDragLeave}
-     on:drop={handleDrop}>
-    
-    <div class="drag-handle" draggable="true" on:dragstart={handleDragStart}>
+
+<div
+    class="block-wrapper"
+    class:drag-over={isDragOver}
+    class:drop-top={isDragOver && dropHalf === 'top'}
+    class:drop-bottom={isDragOver && dropHalf === 'bottom'}
+    class:dragging={isDragging}
+    on:dragover={handleDragOver}
+    on:dragleave={handleDragLeave}
+    on:drop={handleDrop}
+>
+    <div
+        class="drag-handle"
+        draggable="true"
+        on:dragstart={handleDragStart}
+        on:dragend={handleDragEnd}
+    >
         &#8942;&#8942;
     </div>
 
     {#if isHeading}
-        <svelte:element this={"h" + headingLevel}
+        <svelte:element
+            this={"h" + headingLevel}
             class="fastmm-block heading-{headingLevel}"
             contenteditable="true"
             bind:this={blockEl}
@@ -160,26 +207,37 @@
 
     {#if showLinkDialog}
         <div class="link-dialog">
-            <input type="url" placeholder="URL を入力..." bind:value={linkUrl}
-                   on:keydown|stopPropagation={(e) => {
-                       if (e.key === 'Enter') { submitLink(); }
-                       if (e.key === 'Escape') { showLinkDialog = false; }
-                   }} />
+            <input
+                type="url"
+                placeholder="URL を入力..."
+                bind:value={linkUrl}
+                on:keydown|stopPropagation={(e) => {
+                    if (e.key === 'Enter') { submitLink(); }
+                    if (e.key === 'Escape') { showLinkDialog = false; }
+                }}
+            />
         </div>
     {/if}
 </div>
-  
+
 <style>
     .block-wrapper {
         display: flex;
         align-items: flex-start;
         position: relative;
         margin-bottom: 0.2rem;
-        border: 2px solid transparent;
-        transition: border-color 0.2s;
+        border-top: 2px solid transparent;
+        border-bottom: 2px solid transparent;
+        transition: border-color 0.15s;
     }
-    .block-wrapper.drag-over {
+    .block-wrapper.dragging {
+        opacity: 0.5;
+    }
+    .block-wrapper.drop-top {
         border-top-color: #4a90e2;
+    }
+    .block-wrapper.drop-bottom {
+        border-bottom-color: #4a90e2;
     }
 
     .drag-handle {
@@ -195,6 +253,7 @@
         align-items: center;
         justify-content: center;
         padding-top: 0.2rem;
+        flex-shrink: 0;
     }
     .block-wrapper:hover .drag-handle {
         opacity: 1;
@@ -212,7 +271,6 @@
         white-space: pre-wrap;
         position: relative;
     }
-    
     .fastmm-block:focus {
         background-color: rgba(255, 255, 255, 0.03);
         border-radius: 4px;
@@ -224,7 +282,7 @@
     .heading-4 { font-size: 1.25em; font-weight: 600; margin-top: 0.6rem; color: #d0d0d0; }
     .heading-5 { font-size: 1.1em; font-weight: 600; margin-top: 0.4rem; color: #c0c0c0; }
     .heading-6 { font-size: 1em; font-weight: 600; margin-top: 0.3rem; color: #a0a0a0; }
-    
+
     .list { display: flex; }
     .list-bullet { margin-right: 0.5rem; color: #888; user-select: none; }
 
