@@ -54,7 +54,8 @@ async fn open_file(
             id: b.id.clone(),
             parent_id: None,
             previous_sibling_id: None,
-            markdown: crate::editor_state::EditorState::ast_to_markdown(&b.ast_content),
+            // Preserve the original raw Markdown (including block-level prefix like `# `, `- `)
+            markdown: b.plain_text.clone(),
             block_type: b.block_type.clone(),
         });
     }

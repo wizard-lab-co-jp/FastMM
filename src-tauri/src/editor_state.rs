@@ -106,6 +106,20 @@ impl EditorState {
         out
     }
 
+    /// Returns the Markdown prefix string for a given block type.
+    /// Block type is Source of Truth; the prefix is prepended to inline content on sync.
+    fn block_type_prefix(block_type: &crate::ast::BlockType) -> String {
+        use crate::ast::BlockType;
+        match block_type {
+            BlockType::Heading { level } => format!("{} ", "#".repeat(*level as usize)),
+            BlockType::List { list_type, .. } => {
+                if list_type == "ordered" { "1. ".to_string() } else { "- ".to_string() }
+            }
+            BlockType::BlockQuote => "> ".to_string(),
+            _ => String::new(),
+        }
+    }
+
     pub fn process_sync_request(&mut self, req: BlockSyncRequest) -> Option<BlockSyncResponse> {
         // 1. Concurrency control: reject old seq
         if req.seq <= self.last_seq {
@@ -113,14 +127,16 @@ impl EditorState {
         }
         self.last_seq = req.seq;
 
-        // 2. Reconstruct the current raw Markdown string from the frontend's decorations
-        let current_markdown = Self::ast_to_markdown(&req.decorations);
+        // 2. Reconstruct inline Markdown from decorations (no block prefix yet)
+        let inline_md = Self::ast_to_markdown(&req.decorations);
 
-        // Check if there is a change
+        // 3. Update block state
         let mut changed = false;
         if let Some(target) = self.blocks.get_mut(&req.node_id) {
-            target.markdown = req.plain_text;
-            target.block_type = crate::ast::derive_block_type(&target.markdown);
+            // block_type is Source of Truth; prepend its prefix to the inline content
+            let prefix = Self::block_type_prefix(&target.block_type);
+            target.markdown = format!("{}{}", prefix, inline_md);
+            // Do NOT re-derive block_type here; type changes go through apply_format only
             self.is_dirty = true;
         } else {
             changed = true;
@@ -128,14 +144,14 @@ impl EditorState {
 
         if changed {
             self.push_undo_snapshot(&req.node_id, req.caret_offset);
-            
+
             self.blocks.insert(
                 req.node_id.clone(),
                 BlockState {
                     id: req.node_id.clone(),
                     parent_id: None,
                     previous_sibling_id: None,
-                    markdown: current_markdown,
+                    markdown: inline_md,
                     block_type: crate::ast::BlockType::Paragraph,
                 },
             );

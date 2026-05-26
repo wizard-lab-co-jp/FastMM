@@ -1,7 +1,8 @@
 <script lang="ts">
     import type { InlineDecorationNode } from './domUtils';
     import InlineDecoration from './InlineDecoration.svelte';
-    
+    import { activeBlockId, activeBlockElement } from './editorStore';
+
     export let id: string;
     export let blockType: any;
     export let astContent: InlineDecorationNode[];
@@ -10,9 +11,14 @@
     export let onMove: (nodeId: string, targetPreviousSiblingId: string | null) => void;
     export let onFormat: (id: string, actionType: string, element: HTMLElement, metaValue?: string) => void = () => {};
     export let onHistory: (type: 'undo' | 'redo') => void = () => {};
-  
+
     let blockEl: HTMLElement;
     let isComposing = false;
+
+    function handleFocus() {
+        activeBlockId.set(id);
+        activeBlockElement.set(blockEl);
+    }
     let isDragOver = false;
     let showLinkDialog = false;
     let linkUrl = "";
@@ -118,6 +124,7 @@
             class="fastmm-block heading-{headingLevel}"
             contenteditable="true"
             bind:this={blockEl}
+            on:focus={handleFocus}
             on:input={handleInput}
             on:compositionstart={handleCompositionStart}
             on:compositionend={handleCompositionEnd}
@@ -135,6 +142,7 @@
             style={isList ? `margin-left: ${listIndent * 2}rem;` : ''}
             contenteditable="true"
             bind:this={blockEl}
+            on:focus={handleFocus}
             on:input={handleInput}
             on:compositionstart={handleCompositionStart}
             on:compositionend={handleCompositionEnd}

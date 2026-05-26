@@ -1,4 +1,4 @@
-use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Event, Options, Parser, Tag};
 use serde::{Deserialize, Serialize};
 
 // ─── Frontend → Backend (BlockSyncRequest) ───────────────────────────────────
@@ -501,7 +501,7 @@ pub fn apply_inline_decoration(
     selection_end: usize,
     meta_value: Option<&str>,
 ) -> (String, usize) {
-    let mut byte_start = utf16_offset_to_byte_index(markdown, selection_start as u32).unwrap_or(0);
+    let byte_start = utf16_offset_to_byte_index(markdown, selection_start as u32).unwrap_or(0);
     let mut byte_end = utf16_offset_to_byte_index(markdown, selection_end as u32).unwrap_or(markdown.len());
     if byte_end < byte_start {
         byte_end = byte_start;
