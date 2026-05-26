@@ -101,6 +101,18 @@
             visibleBlocks.add(el.getAttribute('data-block-id') as string);
             visibleBlocks = visibleBlocks;
         }
+        return {
+            destroy() {
+                if (observer && el) {
+                    observer.unobserve(el);
+                    const id = el.getAttribute('data-block-id');
+                    if (id) {
+                        visibleBlocks.delete(id);
+                        visibleBlocks = visibleBlocks;
+                    }
+                }
+            }
+        };
     }
 
     // ── Toolbar active-format state (selectionchange, 16 ms debounce) ─────────
@@ -228,9 +240,9 @@
     }
 
     async function handleSplitBlock(id: string, element: HTMLElement) {
-        // Flush any pending content changes first
-        await handleInput(id, element);
+        // Capture caret before handleInput can trigger a Svelte re-render
         const caretOffset = getCaretOffset(element);
+        await handleInput(id, element);
         const newBlockId = generateBlockId();
 
         try {
@@ -540,6 +552,31 @@
                 {/if}
             </div>
 
+            <div class="pane-toggles">
+                <button
+                    class="pane-toggle-btn"
+                    class:active={showDebugPane}
+                    title="Toggle Debug View"
+                    aria-label="Toggle Debug View"
+                    aria-pressed={showDebugPane}
+                    on:click={() => showDebugPane = !showDebugPane}>
+                    <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+                        <path d="M1.5 1A1.5 1.5 0 0 0 0 2.5v11A1.5 1.5 0 0 0 1.5 15h13a1.5 1.5 0 0 0 1.5-1.5v-11A1.5 1.5 0 0 0 14.5 1h-13zM1 2.5a.5.5 0 0 1 .5-.5h4v12h-4a.5.5 0 0 1-.5-.5v-11zm5.5-.5h7a.5.5 0 0 1 .5.5v11a.5.5 0 0 1-.5.5h-7V2z"/>
+                    </svg>
+                </button>
+                <button
+                    class="pane-toggle-btn"
+                    class:active={showRawPane}
+                    title="Toggle Raw Markdown View"
+                    aria-label="Toggle Raw Markdown View"
+                    aria-pressed={showRawPane}
+                    on:click={() => showRawPane = !showRawPane}>
+                    <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+                        <path d="M1.5 1A1.5 1.5 0 0 0 0 2.5v11A1.5 1.5 0 0 0 1.5 15h13a1.5 1.5 0 0 0 1.5-1.5v-11A1.5 1.5 0 0 0 14.5 1h-13zM10.5 2h3.5a.5.5 0 0 1 .5.5v11a.5.5 0 0 1-.5.5h-3.5V2zM9.5 2v12h-8a.5.5 0 0 1-.5-.5v-11a.5.5 0 0 1 .5-.5h8z"/>
+                    </svg>
+                </button>
+            </div>
+
             <div class="menu-status">
                 {#if $isDirty}
                     <span class="status dirty" title="Unsaved changes">●</span>
@@ -759,11 +796,8 @@
     /* ── Center pane ─────────────────────────────────────────────────────── */
     .pane-center {
         flex: 1;
-        min-width: 400px;
+        min-width: 0;
         overflow-y: auto;
-        display: flex;
-        justify-content: center;
-        align-items: flex-start;
     }
 
     /* ── Menu Bar ────────────────────────────────────────────────────────── */
@@ -836,8 +870,39 @@
         border-bottom: 1px solid #333;
         user-select: none;
     }
-    .menu-status {
+    .pane-toggles {
+        display: flex;
+        gap: 6px;
+        align-items: center;
         margin-left: auto;
+        margin-right: 4px;
+    }
+    .pane-toggle-btn {
+        background: transparent;
+        border: 1px solid transparent;
+        color: #888;
+        padding: 4px;
+        border-radius: 4px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.15s ease;
+    }
+    .pane-toggle-btn:hover {
+        color: #ddd;
+        background-color: #2e2e2e;
+    }
+    .pane-toggle-btn.active {
+        color: #8bc4ff;
+        background-color: #1a4a7a;
+        border-color: #4a90e2;
+    }
+    .pane-toggle-btn:focus-visible {
+        outline: 1.5px solid #4a90e2;
+        outline-offset: 1px;
+    }
+    .menu-status {
         padding: 0 0.75rem;
     }
     .status { font-size: 0.7rem; }
@@ -891,7 +956,7 @@
 
     /* ── Editor Container ────────────────────────────────────────────────── */
     .editor-container {
-        max-width: min(800px, 100%);
+        max-width: 800px;
         width: 100%;
         margin: 2rem auto;
         padding: 2rem;

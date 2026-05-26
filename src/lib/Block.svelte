@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { onDestroy } from 'svelte';
     import type { InlineDecorationNode } from './domUtils';
     import type { BlockType } from './editorStore';
     import InlineDecoration from './InlineDecoration.svelte';
@@ -138,6 +139,11 @@
         onKeyDown(id, e, blockEl);
     }
 
+    onDestroy(() => {
+        activeBlockId.update(cur => cur === id ? null : cur);
+        activeBlockElement.update(cur => cur === blockEl ? null : cur);
+    });
+
     // ── Derived display props ─────────────────────────────────────────────────
     $: btype = blockType?.type ?? 'paragraph';
     $: isHeading = btype === 'heading';
@@ -176,6 +182,7 @@
             on:compositionstart={handleCompositionStart}
             on:compositionend={handleCompositionEnd}
             on:keydown={handleKeyDownEvent}
+            on:dragstart|stopPropagation
             data-block-id={id}
         >
             {#each astContent as node (node.key)}
@@ -194,6 +201,7 @@
             on:compositionstart={handleCompositionStart}
             on:compositionend={handleCompositionEnd}
             on:keydown={handleKeyDownEvent}
+            on:dragstart|stopPropagation
             data-block-id={id}
         >
             {#if isList}
@@ -265,6 +273,7 @@
     .fastmm-block {
         flex: 1;
         min-height: 1.5em;
+        margin: 0;
         padding: 0.25rem 0.5rem;
         outline: none;
         word-break: break-word;
@@ -276,14 +285,14 @@
         border-radius: 4px;
     }
 
-    .heading-1 { font-size: 2.2em; font-weight: 800; margin-top: 1.2rem; color: #fff; }
-    .heading-2 { font-size: 1.8em; font-weight: 700; margin-top: 1rem; color: #f0f0f0; }
-    .heading-3 { font-size: 1.5em; font-weight: 700; margin-top: 0.8rem; color: #e0e0e0; }
-    .heading-4 { font-size: 1.25em; font-weight: 600; margin-top: 0.6rem; color: #d0d0d0; }
-    .heading-5 { font-size: 1.1em; font-weight: 600; margin-top: 0.4rem; color: #c0c0c0; }
-    .heading-6 { font-size: 1em; font-weight: 600; margin-top: 0.3rem; color: #a0a0a0; }
+    .heading-1 { font-size: 2.2em; font-weight: 800; margin-top: 1.2rem; margin-bottom: 0.3rem; color: #fff; }
+    .heading-2 { font-size: 1.8em; font-weight: 700; margin-top: 1rem; margin-bottom: 0.25rem; color: #f0f0f0; }
+    .heading-3 { font-size: 1.5em; font-weight: 700; margin-top: 0.8rem; margin-bottom: 0.2rem; color: #e0e0e0; }
+    .heading-4 { font-size: 1.25em; font-weight: 600; margin-top: 0.6rem; margin-bottom: 0.15rem; color: #d0d0d0; }
+    .heading-5 { font-size: 1.1em; font-weight: 600; margin-top: 0.4rem; margin-bottom: 0.1rem; color: #c0c0c0; }
+    .heading-6 { font-size: 1em; font-weight: 600; margin-top: 0.3rem; margin-bottom: 0.1rem; color: #a0a0a0; }
 
-    .list { display: flex; }
+    .list { display: flex; flex-wrap: wrap; }
     .list-bullet { margin-right: 0.5rem; color: #888; user-select: none; }
 
     .link-dialog {
