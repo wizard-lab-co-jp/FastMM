@@ -5,26 +5,27 @@
 <svelte:head>
   <title>FastMM Editor</title>
   <style>
-    body {
+    html, body {
+      height: 100%;
       margin: 0;
       padding: 0;
+      overflow: hidden;
       background: #121212;
       color: #ffffff;
-      min-height: 100vh;
     }
   </style>
 </svelte:head>
 
-<main class="container">
+<div class="container">
   <Editor />
-</main>
+</div>
 
 <style>
   .container {
-    width: 100vw;
-    min-height: 100vh;
+    width: 100%;
+    height: 100vh;
     display: flex;
-    justify-content: center;
-    padding-top: 5vh;
+    flex-direction: column;
+    background: #121212;
   }
 </style>

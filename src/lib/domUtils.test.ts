@@ -1,5 +1,7 @@
+// @vitest-environment jsdom
 import { describe, it, expect, beforeEach } from 'vitest';
-import { extractDecorationsFromDOM, getCaretOffset, setCaretOffset, InlineDecorationNode } from './domUtils';
+import { extractDecorationsFromDOM, getCaretOffset, setCaretOffset } from './domUtils';
+import type { InlineDecorationNode } from './domUtils';
 
 describe('domUtils', () => {
     let container: HTMLElement;

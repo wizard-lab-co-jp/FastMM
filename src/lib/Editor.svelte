@@ -309,172 +309,208 @@
 <!-- Click-outside handler to close menus -->
 <svelte:window on:click={closeMenu} />
 
-<!-- ── Menu Bar ──────────────────────────────────────────────────────────── -->
-<div class="menu-bar" on:click|stopPropagation>
-    <div class="menu-group" class:active={openMenu === 'file'}>
-        <button class="menu-label" on:click={() => toggleMenu('file')}>File</button>
-        {#if openMenu === 'file'}
-        <div class="menu-dropdown">
-            <button on:click={openFile}>Open...</button>
-            <button on:click={saveFile}>Save</button>
-        </div>
-        {/if}
-    </div>
-
-    <div class="menu-group" class:active={openMenu === 'edit'}>
-        <button class="menu-label" on:click={() => toggleMenu('edit')}>Edit</button>
-        {#if openMenu === 'edit'}
-        <div class="menu-dropdown">
-            <button on:click={() => handleHistory('undo')}>Undo</button>
-            <button on:click={() => handleHistory('redo')}>Redo</button>
-        </div>
-        {/if}
-    </div>
-
-    <div class="menu-group" class:active={openMenu === 'view'}>
-        <button class="menu-label" on:click={() => toggleMenu('view')}>View</button>
-        {#if openMenu === 'view'}
-        <div class="menu-dropdown">
-            <button on:click={openTimeMachine}>&#128337; Time Machine</button>
-        </div>
-        {/if}
-    </div>
-
-    <div class="menu-group">
-        <button class="menu-label" on:click={() => toggleMenu('settings')}>Settings</button>
-    </div>
-
-    <div class="menu-status">
-        {#if $isDirty}
-            <span class="status dirty" title="Unsaved changes">●</span>
-        {:else}
-            <span class="status saved" title="Saved">●</span>
-        {/if}
-    </div>
-</div>
-
-<!-- ── Format Toolbar ────────────────────────────────────────────────────── -->
-<div class="format-toolbar">
-    <button
-        class="fmt-btn"
-        disabled={toolbarDisabled}
-        title="Bold (Ctrl+B)"
-        on:mousedown|preventDefault={() => formatActiveBlock('bold')}>
-        <b>B</b>
-    </button>
-    <button
-        class="fmt-btn"
-        disabled={toolbarDisabled}
-        title="Italic (Ctrl+I)"
-        on:mousedown|preventDefault={() => formatActiveBlock('italic')}>
-        <i>I</i>
-    </button>
-    <button
-        class="fmt-btn"
-        disabled={toolbarDisabled}
-        title="Inline Code (Ctrl+E)"
-        on:mousedown|preventDefault={() => formatActiveBlock('code')}>
-        <code>&#96;&#96;</code>
-    </button>
-
-    <span class="tb-divider"></span>
-
-    <button
-        class="fmt-btn"
-        disabled={toolbarDisabled}
-        title="Heading 1"
-        on:mousedown|preventDefault={() => formatActiveBlock('heading', '1')}>
-        H1
-    </button>
-    <button
-        class="fmt-btn"
-        disabled={toolbarDisabled}
-        title="Heading 2"
-        on:mousedown|preventDefault={() => formatActiveBlock('heading', '2')}>
-        H2
-    </button>
-    <button
-        class="fmt-btn"
-        disabled={toolbarDisabled}
-        title="Heading 3"
-        on:mousedown|preventDefault={() => formatActiveBlock('heading', '3')}>
-        H3
-    </button>
-
-    <span class="tb-divider"></span>
-
-    <button
-        class="fmt-btn"
-        disabled={toolbarDisabled}
-        title="Unordered List"
-        on:mousedown|preventDefault={() => formatActiveBlock('list')}>
-        &#8801;
-    </button>
-</div>
-
-<!-- ── Time Machine Panel ─────────────────────────────────────────────────── -->
-{#if showTimeMachine}
-<div class="time-machine-panel">
-    <div class="time-machine-header">
-        <span>Time Machine</span>
-        <button class="close-btn" on:click={() => showTimeMachine = false}>&#x2715;</button>
-    </div>
-    {#if versionHistory.length === 0}
-        <p class="no-history">履歴がありません</p>
-    {:else}
-        <ul class="version-list">
-            {#each versionHistory as entry}
-                <li>
-                    <span class="version-label">{entry.label}</span>
-                    <span class="version-source">{entry.source}</span>
-                    <button class="restore-btn" on:click={() => restoreVersion(entry)}>復元</button>
-                </li>
-            {/each}
-        </ul>
-    {/if}
-</div>
-{/if}
-
-<!-- ── Editor ─────────────────────────────────────────────────────────────── -->
-<div class="editor-container">
-    {#each $nodeOrder as id (id)}
-        <div data-block-id={id} use:registerBlock style="min-height: 1.5em;">
-            {#if visibleBlocks.has(id)}
-                {#if $blocks[id].blockType === 'mermaid'}
-                    <MermaidBlock id={id} plainText={$blocks[id].plainText} onSync={handleGraphicalSync} />
-                {:else if $blocks[id].blockType === 'mathBlock'}
-                    <MathBlock id={id} plainText={$blocks[id].plainText} onSync={handleGraphicalSync} />
-                {:else if $blocks[id].blockType === 'typst'}
-                    <TypstBlock id={id} plainText={$blocks[id].plainText} onSync={handleGraphicalSync} />
-                {:else}
-                    <Block
-                        id={id}
-                        blockType={$blocks[id].blockType}
-                        astContent={$blocks[id].astContent}
-                        onInput={handleInput}
-                        onKeyDown={handleKeyDown}
-                        onMove={handleMoveBlock}
-                        onFormat={handleFormat}
-                        onHistory={handleHistory}
-                    />
+<div class="app-shell">
+    <!-- ── Header (MenuBar + Toolbar + Time Machine) ─────────────────────── -->
+    <header class="app-header">
+        <!-- ── Menu Bar ───────────────────────────────────────────────────── -->
+        <div class="menu-bar" on:click|stopPropagation>
+            <div class="menu-group" class:active={openMenu === 'file'}>
+                <button class="menu-label" on:click={() => toggleMenu('file')}>File</button>
+                {#if openMenu === 'file'}
+                <div class="menu-dropdown">
+                    <button on:click={openFile}>Open...</button>
+                    <button on:click={saveFile}>Save</button>
+                </div>
                 {/if}
+            </div>
+
+            <div class="menu-group" class:active={openMenu === 'edit'}>
+                <button class="menu-label" on:click={() => toggleMenu('edit')}>Edit</button>
+                {#if openMenu === 'edit'}
+                <div class="menu-dropdown">
+                    <button on:click={() => handleHistory('undo')}>Undo</button>
+                    <button on:click={() => handleHistory('redo')}>Redo</button>
+                </div>
+                {/if}
+            </div>
+
+            <div class="menu-group" class:active={openMenu === 'view'}>
+                <button class="menu-label" on:click={() => toggleMenu('view')}>View</button>
+                {#if openMenu === 'view'}
+                <div class="menu-dropdown">
+                    <button on:click={openTimeMachine}>&#128337; Time Machine</button>
+                </div>
+                {/if}
+            </div>
+
+            <div class="menu-group">
+                <button class="menu-label" on:click={() => toggleMenu('settings')}>Settings</button>
+            </div>
+
+            <div class="menu-status">
+                {#if $isDirty}
+                    <span class="status dirty" title="Unsaved changes">●</span>
+                {:else}
+                    <span class="status saved" title="Saved">●</span>
+                {/if}
+            </div>
+        </div>
+
+        <!-- ── Format Toolbar ─────────────────────────────────────────────── -->
+        <div class="format-toolbar">
+            <button
+                class="fmt-btn"
+                disabled={toolbarDisabled}
+                title="Bold (Ctrl+B)"
+                on:mousedown|preventDefault={() => formatActiveBlock('bold')}>
+                <b>B</b>
+            </button>
+            <button
+                class="fmt-btn"
+                disabled={toolbarDisabled}
+                title="Italic (Ctrl+I)"
+                on:mousedown|preventDefault={() => formatActiveBlock('italic')}>
+                <i>I</i>
+            </button>
+            <button
+                class="fmt-btn"
+                disabled={toolbarDisabled}
+                title="Inline Code (Ctrl+E)"
+                on:mousedown|preventDefault={() => formatActiveBlock('code')}>
+                <code>&#96;&#96;</code>
+            </button>
+
+            <span class="tb-divider"></span>
+
+            <button
+                class="fmt-btn"
+                disabled={toolbarDisabled}
+                title="Heading 1"
+                on:mousedown|preventDefault={() => formatActiveBlock('heading', '1')}>
+                H1
+            </button>
+            <button
+                class="fmt-btn"
+                disabled={toolbarDisabled}
+                title="Heading 2"
+                on:mousedown|preventDefault={() => formatActiveBlock('heading', '2')}>
+                H2
+            </button>
+            <button
+                class="fmt-btn"
+                disabled={toolbarDisabled}
+                title="Heading 3"
+                on:mousedown|preventDefault={() => formatActiveBlock('heading', '3')}>
+                H3
+            </button>
+
+            <span class="tb-divider"></span>
+
+            <button
+                class="fmt-btn"
+                disabled={toolbarDisabled}
+                title="Unordered List"
+                on:mousedown|preventDefault={() => formatActiveBlock('list')}>
+                &#8801;
+            </button>
+        </div>
+
+        <!-- ── Time Machine Panel ─────────────────────────────────────────── -->
+        {#if showTimeMachine}
+        <div class="time-machine-panel">
+            <div class="time-machine-header">
+                <span>Time Machine</span>
+                <button class="close-btn" on:click={() => showTimeMachine = false}>&#x2715;</button>
+            </div>
+            {#if versionHistory.length === 0}
+                <p class="no-history">履歴がありません</p>
             {:else}
-                <div class="placeholder">...</div>
+                <ul class="version-list">
+                    {#each versionHistory as entry}
+                        <li>
+                            <span class="version-label">{entry.label}</span>
+                            <span class="version-source">{entry.source}</span>
+                            <button class="restore-btn" on:click={() => restoreVersion(entry)}>復元</button>
+                        </li>
+                    {/each}
+                </ul>
             {/if}
         </div>
-    {/each}
-    {#if $nodeOrder.length === 0}
-        <div class="empty-state">
-            <p>No file opened. Use File → Open to load a Markdown file.</p>
+        {/if}
+    </header>
+
+    <!-- ── Editor Main ────────────────────────────────────────────────────── -->
+    <main class="editor-main">
+        <div class="editor-container">
+            {#each $nodeOrder as id (id)}
+                <div data-block-id={id} use:registerBlock style="min-height: 1.5em;">
+                    {#if visibleBlocks.has(id)}
+                        {#if $blocks[id].blockType === 'mermaid'}
+                            <MermaidBlock id={id} plainText={$blocks[id].plainText} onSync={handleGraphicalSync} />
+                        {:else if $blocks[id].blockType === 'mathBlock'}
+                            <MathBlock id={id} plainText={$blocks[id].plainText} onSync={handleGraphicalSync} />
+                        {:else if $blocks[id].blockType === 'typst'}
+                            <TypstBlock id={id} plainText={$blocks[id].plainText} onSync={handleGraphicalSync} />
+                        {:else}
+                            <Block
+                                id={id}
+                                blockType={$blocks[id].blockType}
+                                astContent={$blocks[id].astContent}
+                                onInput={handleInput}
+                                onKeyDown={handleKeyDown}
+                                onMove={handleMoveBlock}
+                                onFormat={handleFormat}
+                                onHistory={handleHistory}
+                            />
+                        {/if}
+                    {:else}
+                        <div class="placeholder">...</div>
+                    {/if}
+                </div>
+            {/each}
+            {#if $nodeOrder.length === 0}
+                <div class="empty-state">
+                    <p>No file opened. Use File → Open to load a Markdown file.</p>
+                </div>
+            {/if}
         </div>
-    {/if}
+    </main>
 </div>
 
 <style>
+    /* ── App Shell ───────────────────────────────────────────────────────── */
+    .app-shell {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        width: 100%;
+    }
+
+    /* ── App Header ──────────────────────────────────────────────────────── */
+    .app-header {
+        position: relative;
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        background: #1a1a1a;
+        border-bottom: 1px solid #333;
+        z-index: 200;
+        flex-shrink: 0;
+    }
+
+    /* ── Editor Main ─────────────────────────────────────────────────────── */
+    .editor-main {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+    }
+
     /* ── Menu Bar ────────────────────────────────────────────────────────── */
     .menu-bar {
-        max-width: 800px;
-        margin: 0 auto 0 auto;
+        width: 100%;
         padding: 0 0.5rem;
         display: flex;
         align-items: center;
@@ -539,8 +575,7 @@
 
     /* ── Format Toolbar ──────────────────────────────────────────────────── */
     .format-toolbar {
-        max-width: 800px;
-        margin: 0 auto;
+        width: 100%;
         padding: 0.3rem 0.75rem;
         display: flex;
         align-items: center;
@@ -579,11 +614,12 @@
     /* ── Editor Container ────────────────────────────────────────────────── */
     .editor-container {
         max-width: 800px;
-        margin: 0 auto 2rem auto;
+        width: 100%;
+        margin: 2rem auto;
         padding: 2rem;
         background: #1e1e1e;
         color: #e0e0e0;
-        border-radius: 0 0 8px 8px;
+        border-radius: 8px;
         box-shadow: 0 4px 20px rgba(0,0,0,0.3);
         font-family: 'Inter', system-ui, -apple-system, sans-serif;
         font-size: 1.1rem;
@@ -601,8 +637,8 @@
 
     /* ── Time Machine Panel ──────────────────────────────────────────────── */
     .time-machine-panel {
-        position: fixed;
-        top: 70px;
+        position: absolute;
+        top: 100%;
         right: 1rem;
         width: 320px;
         max-height: 60vh;

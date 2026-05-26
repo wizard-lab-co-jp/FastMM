@@ -365,4 +365,31 @@ mod tests {
         let md = EditorState::ast_to_markdown(&ast);
         assert_eq!(md, "Hello ***world***"); // `**` and `*` combine nicely.
     }
+
+    #[test]
+    fn test_hash_path() {
+        let path1 = "/user/documents/test.md";
+        let path2 = "/user/documents/test.md";
+        let path3 = "/user/documents/other.md";
+        
+        let hash1 = EditorState::hash_path(path1);
+        let hash2 = EditorState::hash_path(path2);
+        let hash3 = EditorState::hash_path(path3);
+        
+        assert_eq!(hash1, hash2);
+        assert_ne!(hash1, hash3);
+        assert_eq!(hash1.len(), 16);
+    }
+
+    #[test]
+    fn test_push_undo_snapshot_limit() {
+        let mut state = EditorState::new();
+        for i in 0..105 {
+            state.push_undo_snapshot(&format!("block_{}", i), i);
+        }
+        // Should limit to 100 snapshots
+        assert_eq!(state.undo_stack.len(), 100);
+        // The first 5 should have been pruned, so the oldest remaining is block_5
+        assert_eq!(state.undo_stack[0].caret_node_id, "block_5");
+    }
 }
